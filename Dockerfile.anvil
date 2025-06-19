@@ -1,0 +1,32 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    curl \
+    jq \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -L https://foundry.paradigm.xyz | bash
+ENV PATH="/root/.foundry/bin:${PATH}"
+RUN foundryup
+
+RUN pip3 install --no-cache-dir \
+    mnemonic \
+    eth-account \
+    web3==6.0.0 \
+    requests
+
+WORKDIR /app
+
+COPY scripts/ ./scripts/
+COPY config/ ./config/
+
+RUN find ./scripts -name "*.sh" -exec chmod +x {} \;
+RUN find ./scripts -name "*.py" -exec chmod +x {} \;
+
+EXPOSE 8545 8546

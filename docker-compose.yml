@@ -1,0 +1,259 @@
+version: '3.8'
+
+services:
+
+  node-blockscout-db:
+    image: postgres:15-alpine
+    platform: linux/amd64
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - blockscout-db-data:/var/lib/postgresql/data
+    ports:
+      - "7432:5432"
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  node-stats-db:
+    image: postgres:15-alpine
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: stats
+      POSTGRES_USER: stats
+      POSTGRES_PASSWORD: n0uejXPl61ci6ldCuE2gQU5Y
+    volumes:
+      - stats-db-data:/var/lib/postgresql/data
+    ports:
+      - "7433:5432"
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stats -d stats"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  node-redis:
+    image: redis:alpine
+    platform: linux/amd64
+    volumes:
+      - redis-data:/data
+#    ports:
+#      - "6379:6379"
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  node-anvil:
+    build:
+      context: .
+      dockerfile: Dockerfile.anvil
+    ports:
+      - "8545:8545"
+    volumes:
+      - config-data:/app/config
+      - anvil-data:/app/data
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8545
+      - CHAIN_ID=31337
+      - BLOCK_TIME=0
+      - GAS_LIMIT=30000000
+      - GAS_PRICE=1000000000
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    command: ["/app/scripts/start-anvil.sh"]
+
+  node-sig-provider:
+    image: ghcr.io/blockscout/sig-provider:latest
+    platform: linux/amd64
+    ports:
+      - "8083:8050"
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8050' || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  node-visualizer:
+    image: ghcr.io/blockscout/visualizer:latest
+    platform: linux/amd64
+    environment:
+      VISUALIZER_SERVER_GRPC_ENABLED: false
+    ports:
+      - "9002:8050"
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8050' || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  node-backend:
+    image: blockscout/blockscout:latest
+    platform: linux/amd64
+    env_file:
+      - .env
+    environment:
+      CHAIN_ID: ${CHAIN_ID}
+      NETWORK: "Anvil Local"
+      SUBNETWORK: "Development"
+      LOGO: "https://avatars.githubusercontent.com/u/45625840?s=200&v=4"
+      FOOTER_LOGO: "https://avatars.githubusercontent.com/u/45625840?s=200&v=4"
+      ETHEREUM_JSONRPC_VARIANT: geth
+      ETHEREUM_JSONRPC_HTTP_URL: http://node-anvil:8545
+      ETHEREUM_JSONRPC_TRACE_URL: http://node-anvil:8545
+      ETHEREUM_JSONRPC_WS_URL: ws://node-anvil:8546
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@node-blockscout-db:5432/${POSTGRES_DB}?ssl=false
+      ACCOUNT_REDIS_URL: redis://node-redis:6379
+      MICROSERVICE_VISUALIZE_SOL2UML_URL: http://node-visualizer:8050
+      MICROSERVICE_SIG_PROVIDER_URL: http://node-sig-provider:8050
+      SECRET_KEY_BASE: RMgI4C1HSkxsEjdhtGMfwAHfyT6CKWXOgzCboJflfSm4jeAlic52io05KB6mqzc5
+      POOL_SIZE: 20
+      POOL_SIZE_API: 10
+      ECTO_USE_SSL: false
+      MIX_ENV: prod
+      PORT: 4000
+      INDEXER_MEMORY_LIMIT: 1
+      INDEXER_CATCHUP_BLOCKS_BATCH_SIZE: 1
+      INDEXER_BLOCK_BATCH_SIZE: 1
+      INDEXER_RECEIPTS_BATCH_SIZE: 1
+      INDEXER_BLOCK_CATCHUP_SEQUENCE_TIMEOUT: 10000
+      INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER: true
+      INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: true
+    ports:
+      - "${BLOCKSCOUT_PORT}:4000"
+    volumes:
+      - backend-logs:/app/logs
+    depends_on:
+      node-blockscout-db:
+        condition: service_healthy
+      node-redis:
+        condition: service_healthy
+      node-anvil:
+        condition: service_started
+      node-sig-provider:
+        condition: service_healthy
+      node-visualizer:
+        condition: service_healthy
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    command: >
+      sh -c "
+        bin/blockscout eval 'Elixir.Explorer.ReleaseTasks.create_and_migrate()' &&
+        bin/blockscout start
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://node-backend:4000/api/v2/stats || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+
+  node-stats:
+    image: ghcr.io/blockscout/stats:latest
+    platform: linux/amd64
+    environment:
+      STATS__DB_URL: postgresql://stats:n0uejXPl61ci6ldCuE2gQU5Y@node-stats-db:5432/stats
+      STATS__BLOCKSCOUT_DB_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@node-blockscout-db:5432/${POSTGRES_DB}
+      STATS__BLOCKSCOUT_API_URL: http://node-backend:4000
+      STATS__SERVER__HTTP__ENABLED: true
+      STATS__SERVER__HTTP__ADDR: 0.0.0.0:8050
+      STATS__SERVER__HTTP__MAX_BODY_SIZE: 2097152
+      STATS__CREATE_DATABASE: false
+      STATS__RUN_MIGRATIONS: true
+      STATS__TRACING__ENABLED: true
+      STATS__TRACING__FORMAT: default
+    ports:
+      - "9001:8050"
+    depends_on:
+      node-stats-db:
+        condition: service_healthy
+      node-backend:
+        condition: service_healthy
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "timeout 3 bash -c '</dev/tcp/localhost/8050' || exit 1" ]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+
+  node-frontend:
+    image: ghcr.io/blockscout/frontend:latest
+    platform: linux/amd64
+    environment:
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_API_HOST: localhost
+      NEXT_PUBLIC_API_PORT: 4000
+      NEXT_PUBLIC_API_PROTOCOL: http
+      NEXT_PUBLIC_STATS_API_HOST: http://localhost:9001
+      NEXT_PUBLIC_NETWORK_ICON: https://avatars.githubusercontent.com/u/43071041?s=200&v=4
+      NEXT_PUBLIC_NETWORK_NAME: "Anvil Local"
+      NEXT_PUBLIC_NETWORK_SHORT_NAME: "Anvil"
+      NEXT_PUBLIC_NETWORK_ID: 31337
+      NEXT_PUBLIC_NETWORK_CURRENCY_NAME: "Ether"
+      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL: "ETH"
+      NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: 18
+      NEXT_PUBLIC_API_BASE_PATH: /
+      NEXT_PUBLIC_APP_HOST: localhost
+      NEXT_PUBLIC_APP_PROTOCOL: http
+      NEXT_PUBLIC_HOMEPAGE_CHARTS: "['daily_txs','coin_price','market_cap']"
+      NEXT_PUBLIC_VISUALIZE_API_HOST: http://localhost:9002
+      NEXT_PUBLIC_IS_TESTNET: true
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: ws
+      NEXT_PUBLIC_API_SPEC_URL: https://raw.githubusercontent.com/blockscout/blockscout-api-v2-swagger/main/swagger.yaml
+      DISABLE_SITEMAP: true
+    ports:
+      - "3000:3000"
+    networks:
+      - anvil-network
+    restart: unless-stopped
+    depends_on:
+      node-backend:
+        condition: service_healthy
+      node-stats:
+        condition: service_healthy
+
+
+volumes:
+  blockscout-db-data:
+  stats-db-data:
+  redis-data:
+  backend-logs:
+  anvil-data:
+  explorer-data:
+  config-data:
+
+networks:
+  anvil-network:
+    driver: bridge

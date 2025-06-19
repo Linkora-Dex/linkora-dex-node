@@ -1,0 +1,18 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY scripts/generate-wallets.py /app/scripts/
+COPY scripts/fund-wallets.py /app/scripts/
+COPY scripts/start-funder.sh /app/scripts/
+
+RUN chmod +x /app/scripts/start-funder.sh
+
+CMD ["/app/scripts/start-funder.sh"]
