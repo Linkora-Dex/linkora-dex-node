@@ -416,6 +416,11 @@ curl http://localhost:3000
 curl http://localhost:4000/api/v2/stats
 ```
 
+## Лицензия
+
+Apache License 2.0 - см. [LICENSE](./LICENSE) для деталей
+
+
 Anvil DevNet provides a full-featured Ethereum development environment with integrated Blockscout 
 explorer, statistics system and all necessary services for efficient DeFi application and smart 
 contract development
