@@ -1,5 +1,18 @@
 # Anvil DevNet: Full-featured Ethereum development environment
 
+```bash
+docker-compose down
+
+utils/cleanup-volumes.sh
+
+bash run_blockscout.sh
+
+scripts/activate_account.sh
+
+utils/transfer.sh
+
+```
+
 ## Project Architecture
 
 Anvil DevNet represents a comprehensive infrastructure for developing and testing Ethereum applications, including blockchain node, databases, web interfaces and automation services.
